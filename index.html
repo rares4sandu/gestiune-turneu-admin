@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Gestiune Turneu – acces</title>
+<style>
+  :root {
+    --fundal: #f4f6f5; --card: #ffffff; --text: #16211f; --sters: #6b7a76;
+    --contur: #dfe5e3; --accent: #1f7a4d; --accent-text: #ffffff;
+    --rosu: #b3261e; --galben: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundal: #111615; --card: #1a2120; --text: #e7eeec; --sters: #9aa8a4;
+      --contur: #2c3533; --accent: #3fa874; --accent-text: #0d1311;
+      --rosu: #f2877f; --galben: #e0b35a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundal); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center;
+           padding: 14px 16px; background: var(--card);
+           border-bottom: 1px solid var(--contur); }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--sters); margin: 24px 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--contur);
+          border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+  .nume { font-weight: 650; font-size: 17px; }
+  .mic { color: var(--sters); font-size: 13px; overflow-wrap: anywhere; }
+  .rand { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button { font: inherit; border: 1px solid var(--contur); background: var(--card);
+           color: var(--text); border-radius: 9px; padding: 9px 14px;
+           min-height: 42px; cursor: pointer; }
+  button.accent { background: var(--accent); border-color: var(--accent);
+                  color: var(--accent-text); font-weight: 600; }
+  button.rosu { color: var(--rosu); }
+  button:disabled { opacity: .5; }
+  input { font: inherit; width: 100%; padding: 11px 12px; border-radius: 9px;
+          border: 1px solid var(--contur); background: var(--card);
+          color: var(--text); margin: 4px 0 12px; }
+  label { font-weight: 600; font-size: 14px; }
+  .ramase { font-weight: 650; }
+  .scos { color: var(--rosu); font-weight: 650; }
+  .mesaj { min-height: 22px; font-size: 14px; }
+  .mesaj.rau { color: var(--rosu); }
+  .gol { color: var(--sters); font-size: 14px; padding: 4px 2px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--sters); font-size: 14px; }
+  ul { margin: 6px 0 0; padding-left: 20px; font-size: 14px; }
+  a { color: var(--accent); }
+  .alegere { margin-top: 10px; padding: 10px; border-radius: 9px;
+             border: 1px dashed var(--contur); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Gestiune Turneu</h1>
+  <button id="iesi" hidden>Ieși</button>
+</header>
+<main>
+  <section id="intrare" hidden>
+    <h2>Contul de administrator</h2>
+    <div class="card">
+      <form id="formular">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required>
+        <label for="parola">Parolă</label>
+        <input id="parola" type="password" autocomplete="current-password" required>
+        <button class="accent" type="submit">Intră</button>
+        <p class="mesaj" id="mesaj_intrare"></p>
+      </form>
+      <p class="mic">O singură dată pe telefonul ăsta: parola nu se păstrează,
+        doar o cheie de sesiune.</p>
+    </div>
+  </section>
+
+  <section id="lucru" hidden>
+    <div class="rand" style="justify-content: space-between; align-items: center;">
+      <span class="mesaj" id="mesaj"></span>
+      <button id="reimprospateaza">Reîmprospătează</button>
+    </div>
+    <h2>Cereri noi</h2>
+    <div id="cereri"></div>
+    <h2>Cine are acces</h2>
+    <div id="oameni"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// Proiectul Firebase si cheia web sunt publice prin natura lor: ce poate face
+// fiecare hotarasc regulile din Firestore. Fara contul tau, pagina nu vede
+// si nu schimba nimic.
+const PROIECT = "gestiuneturneu";
+const CHEIE = "AIzaSyBN7lvUigLHOOuwDnPdSW-mR0RhO9oY-eE";
+const BAZA = `https://firestore.googleapis.com/v1/projects/${PROIECT}/databases/(default)/documents`;
+const DOC = `projects/${PROIECT}/databases/(default)/documents`;
+const SESIUNE = "gestiune-turneu-sesiune";
+const CATE = [1, 3, 5, 10];
+
+let token = null, tokenPana = 0;
+
+// ------------------------------------------------------------ unelte
+function el(tag, props, ...copii) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "onclick") e.addEventListener("click", v);
+    else if (k === "class") e.className = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of copii.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+function citeste(cheie) { try { return localStorage.getItem(cheie); } catch { return null; } }
+function scrie(cheie, v) { try { localStorage.setItem(cheie, v); } catch {} }
+function sterge(cheie) { try { localStorage.removeItem(cheie); } catch {} }
+
+function spune(text, rau) {
+  const m = document.getElementById("mesaj");
+  m.textContent = text || "";
+  m.className = "mesaj" + (rau ? " rau" : "");
+}
+
+function azi() {
+  const d = new Date();
+  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+}
+
+function cand(text) {
+  if (!text) return "";
+  const d = new Date(text);
+  if (isNaN(d)) return "";
+  return d.toLocaleString("ro-RO", { day: "2-digit", month: "2-digit",
+    year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function saptamana(eticheta) {
+  const m = /(\d{2})\.(\d{2})\.(\d{4})/.exec(eticheta || "");
+  if (!m) return eticheta || "";
+  const luni = new Date(+m[3], +m[2] - 1, +m[1]);
+  const dum = new Date(luni); dum.setDate(luni.getDate() + 6);
+  const f = (d) => `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return `${f(luni)}–${f(dum)}.${dum.getFullYear()}`;
+}
+
+function valori(campuri) {
+  const una = (v) => {
+    if ("stringValue" in v) return v.stringValue;
+    if ("integerValue" in v) return Number(v.integerValue);
+    if ("booleanValue" in v) return v.booleanValue;
+    if ("timestampValue" in v) return v.timestampValue;
+    if ("arrayValue" in v) return (v.arrayValue.values || []).map(una);
+    return null;
+  };
+  const r = {};
+  for (const [k, v] of Object.entries(campuri || {})) r[k] = una(v);
+  return r;
+}
+
+function valoare(v) {
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (Number.isInteger(v)) return { integerValue: String(v) };
+  return { stringValue: String(v) };
+}
+
+function scriere(colectie, id, date, adauga) {
+  const fields = {};
+  for (const [k, v] of Object.entries(date)) fields[k] = valoare(v);
+  const s = { update: { name: `${DOC}/${colectie}/${id}`, fields },
+              updateMask: { fieldPaths: Object.keys(date) } };
+  if (adauga) s.updateTransforms = Object.entries(adauga).map(
+    ([camp, n]) => ({ fieldPath: camp, increment: { integerValue: String(n) } }));
+  return s;
+}
+
+// ------------------------------------------------------------ contul
+async function intra(email, parola) {
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${CHEIE}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: parola, returnSecureToken: true }) });
+  if (!r.ok) throw new Error("Firebase nu primește emailul sau parola.");
+  const d = await r.json();
+  token = d.idToken;
+  tokenPana = Date.now() + (Number(d.expiresIn) - 120) * 1000;
+  scrie(SESIUNE, d.refreshToken);
+}
+
+async function tokenul() {
+  if (token && Date.now() < tokenPana) return token;
+  const sesiune = citeste(SESIUNE);
+  if (!sesiune) throw new Error("intra");
+  const r = await fetch(`https://securetoken.googleapis.com/v1/token?key=${CHEIE}`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(sesiune)}` });
+  if (!r.ok) { sterge(SESIUNE); throw new Error("intra"); }
+  const d = await r.json();
+  token = d.id_token;
+  tokenPana = Date.now() + (Number(d.expires_in) - 120) * 1000;
+  return token;
+}
+
+// ------------------------------------------------------------ baza
+async function toate(colectie) {
+  const t = await tokenul();
+  let rezultat = [], pagina = "";
+  do {
+    const r = await fetch(`${BAZA}/${colectie}?pageSize=300&key=${CHEIE}` +
+      (pagina ? `&pageToken=${encodeURIComponent(pagina)}` : ""),
+      { headers: { Authorization: `Bearer ${t}` } });
+    if (r.status === 401 || r.status === 403) throw new Error("Contul nu are voie aici — ești intrat cu contul de administrator?");
+    if (!r.ok) throw new Error(`Baza a răspuns cu eroarea ${r.status}.`);
+    const d = await r.json();
+    for (const doc of d.documents || [])
+      rezultat.push(Object.assign(valori(doc.fields), { id: doc.name.split("/").pop() }));
+    pagina = d.nextPageToken || "";
+  } while (pagina);
+  return rezultat;
+}
+
+async function trimite(scrieri) {
+  const t = await tokenul();
+  const r = await fetch(`${BAZA}:commit?key=${CHEIE}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ writes: scrieri }) });
+  if (!r.ok) throw new Error(`Nu s-a salvat (eroarea ${r.status}).`);
+}
+
+// aceleasi scrieri ca programul (cod/modul_cereri.py)
+function daTurnee(calculator, nume, cate, telefon, idCerere) {
+  const scrieri = [];
+  if (idCerere) scrieri.push(scriere("cereri", idCerere,
+    { stare: "aprobata", turnee: cate, data: azi() }));
+  const date = { nume, scos: false, oprit: false, data: azi() };
+  if (telefon) date.telefon = telefon;
+  scrieri.push(scriere("acces", calculator, date, { ramase: cate }));
+  return trimite(scrieri);
+}
+
+function refuza(idCerere) {
+  return trimite([scriere("cereri", idCerere, { stare: "refuzata" })]);
+}
+
+function scoateAccesul(calculator, imediat) {
+  return trimite([scriere("acces", calculator,
+    { ramase: 0, scos: true, oprit: !!imediat, data: azi() })]);
+}
+
+// ------------------------------------------------------------ ecranul
+async function fa(buton, treaba, dupa) {
+  const toateButoanele = document.querySelectorAll("#lucru button");
+  toateButoanele.forEach((b) => (b.disabled = true));
+  try {
+    await treaba();
+    spune(dupa);
+    await incarca();
+  } catch (e) {
+    spune(e.message, true);
+    toateButoanele.forEach((b) => (b.disabled = false));
+  }
+}
+
+function cateCustom() {
+  const t = prompt("Câte turnee?", "5");
+  if (t === null) return null;
+  const n = parseInt(t, 10);
+  if (!(n >= 1 && n <= 999)) { alert("Scrie un număr de turnee, de exemplu 5."); return null; }
+  return n;
+}
+
+function butoaneTurnee(eticheta, laClic) {
+  return el("div", { class: "rand" },
+    el("span", { class: "mic", style: "align-self:center" }, eticheta),
+    CATE.map((n) => el("button", { class: n === 5 ? "accent" : "",
+      onclick: () => laClic(n) }, String(n))),
+    el("button", { onclick: () => { const n = cateCustom(); if (n) laClic(n); } }, "Alt număr…"));
+}
+
+function arataCererile(cereri) {
+  const loc = document.getElementById("cereri");
+  loc.replaceChildren();
+  const noi = cereri.filter((c) => c.stare === "noua")
+    .sort((a, b) => String(b.creata || "").localeCompare(String(a.creata || "")));
+  if (!noi.length) { loc.append(el("p", { class: "gol" }, "Nicio cerere nouă.")); return; }
+  for (const c of noi) {
+    loc.append(el("div", { class: "card" },
+      el("div", { class: "nume" }, c.nume || "?"),
+      el("div", { class: "mic" },
+        c.telefon ? el("a", { href: `tel:${String(c.telefon).replace(/[^0-9+]/g, "")}` }, c.telefon) : "fără telefon",
+        " · ", cand(c.creata)),
+      el("div", { class: "mic" }, c.calculator || ""),
+      butoaneTurnee("Dă acces:", (n) => fa(null,
+        () => daTurnee(c.calculator, c.nume || "?", n, c.telefon || "", c.id),
+        `✓ ${c.nume}: ${n} ${n === 1 ? "turneu" : "turnee"}`)),
+      el("div", { class: "rand" },
+        el("button", { class: "rosu", onclick: () => {
+          if (confirm(`Refuzi cererea lui ${c.nume}?`))
+            fa(null, () => refuza(c.id), `Cererea lui ${c.nume} e refuzată.`);
+        } }, "Refuză"))));
+  }
+}
+
+function arataOamenii(oameni, bilete) {
+  const loc = document.getElementById("oameni");
+  loc.replaceChildren();
+  if (!oameni.length) { loc.append(el("p", { class: "gol" }, "Încă n-ai dat acces nimănui.")); return; }
+  const folosite = {};
+  for (const b of bilete) (folosite[b.calculator] = folosite[b.calculator] || []).push(b);
+  oameni.sort((a, b) => (!!a.scos - !!b.scos) || String(a.nume).localeCompare(String(b.nume)));
+  for (const o of oameni) {
+    const ale = (folosite[o.id] || []).sort((a, b) => String(b.creat || "").localeCompare(String(a.creat || "")));
+    const alegere = el("div", { class: "alegere", hidden: "" },
+      el("div", { class: "mic" }, "Turneele rămase se pierd. Programul i se deschide în continuare."),
+      el("div", { class: "rand" },
+        el("button", { onclick: () => fa(null, () => scoateAccesul(o.id, false),
+          `Accesul lui ${o.nume} e scos (de la turneele noi).`) }, "De la turneele noi"),
+        el("button", { class: "rosu", onclick: () => fa(null, () => scoateAccesul(o.id, true),
+          `Accesul lui ${o.nume} e scos imediat.`) }, "Imediat"),
+        el("button", { onclick: () => alegere.hidden = true }, "Renunț")),
+      el("div", { class: "mic" },
+        "„De la turneele noi”: își termină turneul în curs. „Imediat”: nici turneul în curs nu mai primește liste noi."));
+    loc.append(el("div", { class: "card" },
+      el("div", { class: "nume" }, o.nume || "?"),
+      el("div", { class: "mic" },
+        o.telefon ? el("a", { href: `tel:${String(o.telefon).replace(/[^0-9+]/g, "")}` }, o.telefon) : "", o.telefon ? " · " : "",
+        o.id),
+      el("div", {}, o.scos
+        ? el("span", { class: "scos" }, o.oprit ? "Acces scos (imediat)" : "Acces scos")
+        : el("span", { class: "ramase" }, `${o.ramase || 0} ${o.ramase === 1 ? "turneu rămas" : "turnee rămase"}`),
+        el("span", { class: "mic" }, ` · ${ale.length} ${ale.length === 1 ? "folosit" : "folosite"}`)),
+      ale.length ? el("details", {}, el("summary", {}, "Turneele folosite"),
+        el("ul", {}, ale.map((b) => el("li", {}, `${b.turneu || "?"}, ${saptamana(b.saptamana)}`)))) : null,
+      butoaneTurnee("Adaugă:", (n) => fa(null,
+        () => daTurnee(o.id, o.nume || "?", n, "", ""),
+        `✓ ${o.nume}: +${n} ${n === 1 ? "turneu" : "turnee"}`)),
+      o.scos ? null : el("div", { class: "rand" },
+        el("button", { class: "rosu", onclick: () => alegere.hidden = false }, "Scoate accesul…")),
+      alegere));
+  }
+}
+
+async function incarca() {
+  spune("… mă uit în bază");
+  const [cereri, oameni, bilete] = await Promise.all(
+    [toate("cereri"), toate("acces"), toate("turnee")]);
+  arataCererile(cereri);
+  arataOamenii(oameni, bilete);
+  spune(`Actualizat la ${new Date().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })}`);
+}
+
+function ecran(intrat) {
+  document.getElementById("intrare").hidden = intrat;
+  document.getElementById("lucru").hidden = !intrat;
+  document.getElementById("iesi").hidden = !intrat;
+}
+
+async function porneste() {
+  if (!citeste(SESIUNE)) { ecran(false); return; }
+  ecran(true);
+  try { await incarca(); }
+  catch (e) { if (e.message === "intra") ecran(false); else spune(e.message, true); }
+}
+
+document.getElementById("formular").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const m = document.getElementById("mesaj_intrare");
+  m.textContent = "… intru"; m.className = "mesaj";
+  try {
+    await intra(document.getElementById("email").value.trim(),
+                document.getElementById("parola").value);
+    document.getElementById("parola").value = "";
+    m.textContent = "";
+    await porneste();
+  } catch (e) { m.textContent = e.message; m.className = "mesaj rau"; }
+});
+document.getElementById("reimprospateaza").addEventListener("click",
+  () => incarca().catch((e) => spune(e.message, true)));
+document.getElementById("iesi").addEventListener("click", () => {
+  sterge(SESIUNE); token = null; ecran(false);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !document.getElementById("lucru").hidden)
+    incarca().catch((e) => spune(e.message, true));
+});
+porneste();
+</script>
+</body>
+</html>
